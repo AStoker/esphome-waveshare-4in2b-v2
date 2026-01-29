@@ -33,7 +33,7 @@ Or from a GitHub repository:
 external_components:
   - source:
       type: git
-      url: https://github.com/YOUR_USERNAME/esphome-waveshare-4in2b-v2
+      url: https://github.com/astoker/esphome-waveshare-4in2b-v2
     components: [waveshare_4in2b_v2]
 ```
 
