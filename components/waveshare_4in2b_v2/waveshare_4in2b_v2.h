@@ -1,66 +1,83 @@
 #pragma once
 
 // SPDX-License-Identifier: MIT
-// Custom driver for Waveshare 4.2inch e-Paper (B) V2
-// Supports both OLD and NEW hardware revisions with automatic detection
-// Based on official Waveshare Arduino library:
+// Driver for the Waveshare 4.2inch e-Paper Module (B) V2 (400x300, black/white/red).
+//
+// The panel shipped with two different controllers under the same product name:
+//   OLD  UC8176-style  - 0x10/0x13 plane data, 0x12 refresh, BUSY low while busy
+//   NEW  SSD168x-style - 0x24/0x26 plane data, 0x22+0x20 refresh, BUSY high while busy
+//
+// Based on the official Waveshare Arduino library:
 // https://github.com/waveshareteam/e-Paper/tree/master/Arduino/epd4in2b_V2
 
+#include "esphome/components/display/display_buffer.h"
+#include "esphome/components/spi/spi.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
-#include "esphome/components/spi/spi.h"
-#include "esphome/components/display/display_buffer.h"
 
 namespace esphome {
 namespace waveshare_4in2b_v2 {
 
-// Display resolution
-static const uint16_t EPD_WIDTH = 400;
-static const uint16_t EPD_HEIGHT = 300;
+static constexpr uint16_t EPD_WIDTH = 400;
+static constexpr uint16_t EPD_HEIGHT = 300;
+/// Bytes in one colour plane. The frame buffer holds the black plane followed by the red plane.
+static constexpr size_t EPD_PLANE_SIZE = static_cast<size_t>(EPD_WIDTH) * EPD_HEIGHT / 8;
+static constexpr size_t EPD_BUFFER_SIZE = EPD_PLANE_SIZE * 2;
+
+/// Which controller the attached panel uses. Resolved to OLD or NEW during setup.
+enum Model : uint8_t {
+  MODEL_AUTO = 0,
+  MODEL_OLD,
+  MODEL_NEW,
+};
+
+/// What a Color means on a three-colour panel.
+enum class Ink : uint8_t { WHITE, BLACK, RED };
 
 class Waveshare4In2BV2 : public display::DisplayBuffer,
                          public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                               spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ> {
+                                               spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_4MHZ> {
  public:
   void setup() override;
   void update() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::PROCESSOR; }
 
-  void set_dc_pin(GPIOPin *dc_pin) { dc_pin_ = dc_pin; }
-  void set_reset_pin(GPIOPin *reset_pin) { reset_pin_ = reset_pin; }
-  void set_busy_pin(GPIOPin *busy_pin) { busy_pin_ = busy_pin; }
-  void set_full_update_every(uint32_t full_update_every) { full_update_every_ = full_update_every; }
+  void set_dc_pin(GPIOPin *dc_pin) { this->dc_pin_ = dc_pin; }
+  void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
+  void set_busy_pin(GPIOPin *busy_pin) { this->busy_pin_ = busy_pin; }
+  void set_model(Model model) { this->model_ = model; }
 
+  void fill(Color color) override;
   display::DisplayType get_display_type() override { return display::DisplayType::DISPLAY_TYPE_COLOR; }
 
  protected:
-  void draw_absolute_pixel_internal(int x, int y, Color color) override;
   int get_width_internal() override { return EPD_WIDTH; }
   int get_height_internal() override { return EPD_HEIGHT; }
-  size_t get_buffer_length_();
+  void draw_absolute_pixel_internal(int x, int y, Color color) override;
+  void set_ink_(size_t pos, uint8_t mask, Ink ink);
 
-  void init_display_();
-  void send_command_(uint8_t command);
-  void send_data_(uint8_t data);
+  // Wire protocol.
+  void command_(uint8_t command);
+  void data_(uint8_t data);
+  void write_plane_(uint8_t command, const uint8_t *plane, bool invert);
+
+  // Panel lifecycle. Every refresh is a full reset -> init -> planes -> refresh -> sleep cycle.
   void reset_();
-  void wait_until_idle_();
-  bool detect_version_();
-  void init_new_();
-  void init_old_();
-  void display_frame_();
+  Model detect_model_();
+  void init_();
+  void refresh_();
+  void sleep_();
+  bool wait_until_idle_();
 
   GPIOPin *dc_pin_{nullptr};
   GPIOPin *reset_pin_{nullptr};
   GPIOPin *busy_pin_{nullptr};
 
-  uint32_t full_update_every_{1};
-  uint32_t at_update_{0};
-
-  // Flag to determine which command set to use
-  // false = new version (commands 0x24, 0x26)
-  // true = old version (commands 0x10, 0x13)
-  bool is_old_version_{false};
+  Model model_{MODEL_AUTO};
+  bool auto_detected_{false};
+  /// The BUSY level that means "busy". The two controllers drive it in opposite directions.
+  bool busy_level_{true};
 };
 
 }  // namespace waveshare_4in2b_v2
