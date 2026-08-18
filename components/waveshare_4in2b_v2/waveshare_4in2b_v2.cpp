@@ -14,8 +14,13 @@ namespace waveshare_4in2b_v2 {
 
 static const char *const TAG = "waveshare_4in2b_v2";
 
-/// A three-colour refresh takes 15-20s; allow generous headroom before giving up.
-static const uint32_t IDLE_TIMEOUT_MS = 30000;
+/// Timeout for the short blocking waits during init and power-off.
+static const uint32_t IDLE_TIMEOUT_MS = 5000;
+/// A three-colour refresh takes 15-20s; allow generous headroom before giving up on it.
+static const uint32_t REFRESH_TIMEOUT_MS = 30000;
+/// The controller takes a moment to assert BUSY after the refresh command. Do not mistake
+/// that gap for a finished refresh.
+static const uint32_t REFRESH_SETTLE_MS = 100;
 /// Plane data is streamed in chunks so the red plane can be inverted without a second frame buffer.
 static const size_t CHUNK_SIZE = 512;
 
@@ -68,6 +73,10 @@ void Waveshare4In2BV2::setup() {
 void Waveshare4In2BV2::update() {
   if (this->is_failed())
     return;
+  if (this->refresh_pending_) {
+    ESP_LOGW(TAG, "Skipping this update; the previous refresh has not finished");
+    return;
+  }
   this->do_update_();
 
   // Deep sleep is only left by a hardware reset, so each refresh re-runs the whole cycle. The
@@ -87,7 +96,28 @@ void Waveshare4In2BV2::update() {
     this->write_plane_(0x13, red, false);
   }
 
-  this->refresh_();
+  this->start_refresh_();
+}
+
+void Waveshare4In2BV2::loop() {
+  if (!this->refresh_pending_)
+    return;
+  const uint32_t elapsed = millis() - this->refresh_started_;
+  if (elapsed < REFRESH_SETTLE_MS)
+    return;
+
+  if (this->busy_pin_->digital_read() == this->busy_level_) {
+    if (elapsed < REFRESH_TIMEOUT_MS)
+      return;  // still refreshing; check again on the next loop
+    ESP_LOGE(TAG, "Panel stayed busy for %ums; is the %s revision correct?", (unsigned) REFRESH_TIMEOUT_MS,
+             model_name(this->model_));
+    this->status_set_warning();
+  } else {
+    ESP_LOGD(TAG, "Display refresh complete after %ums", (unsigned) elapsed);
+    this->status_clear_warning();
+  }
+
+  this->refresh_pending_ = false;
   this->sleep_();
 }
 
@@ -144,17 +174,16 @@ void Waveshare4In2BV2::init_() {
   }
 }
 
-void Waveshare4In2BV2::refresh_() {
+void Waveshare4In2BV2::start_refresh_() {
   if (this->model_ == MODEL_NEW) {
     this->command_(0x22);  // display update control
     this->data_(0xF7);
     this->command_(0x20);  // trigger update
   } else {
     this->command_(0x12);  // display refresh
-    delay(100);            // NOLINT
   }
-  if (this->wait_until_idle_())
-    ESP_LOGD(TAG, "Display refresh complete");
+  this->refresh_started_ = millis();
+  this->refresh_pending_ = true;
 }
 
 void Waveshare4In2BV2::sleep_() {

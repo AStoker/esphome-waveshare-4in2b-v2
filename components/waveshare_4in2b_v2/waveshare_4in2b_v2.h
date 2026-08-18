@@ -40,6 +40,7 @@ class Waveshare4In2BV2 : public display::DisplayBuffer,
  public:
   void setup() override;
   void update() override;
+  void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::PROCESSOR; }
 
@@ -63,10 +64,12 @@ class Waveshare4In2BV2 : public display::DisplayBuffer,
   void write_plane_(uint8_t command, const uint8_t *plane, bool invert);
 
   // Panel lifecycle. Every refresh is a full reset -> init -> planes -> refresh -> sleep cycle.
+  // The 15-20s refresh is awaited from loop() rather than blocked on, so update() returns in
+  // well under a second and the rest of the device stays responsive while the panel settles.
   void reset_();
   Model detect_model_();
   void init_();
-  void refresh_();
+  void start_refresh_();
   void sleep_();
   bool wait_until_idle_();
 
@@ -78,6 +81,9 @@ class Waveshare4In2BV2 : public display::DisplayBuffer,
   bool auto_detected_{false};
   /// The BUSY level that means "busy". The two controllers drive it in opposite directions.
   bool busy_level_{true};
+  /// Set once the refresh command has been issued, cleared by loop() when the panel goes idle.
+  bool refresh_pending_{false};
+  uint32_t refresh_started_{0};
 };
 
 }  // namespace waveshare_4in2b_v2

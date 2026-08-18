@@ -99,12 +99,21 @@ That heuristic works on the boards it has been tried on, but it is a heuristic. 
     model: new   # or: old
 ```
 
-## Power behaviour
+## Power and timing behaviour
 
 Each refresh runs a complete reset → init → data → refresh → deep-sleep cycle, so the panel is
 never left in its high-voltage driving state between updates. This matches Waveshare's own example
-code and is what the panel is rated for. Reset and init cost well under a second against the
-15–20 second refresh a three-colour panel needs.
+code and is what the panel is rated for.
+
+A three-colour refresh takes 15–20 seconds of panel time. That wait happens in `loop()`, not
+inside `update()`, so the device stays responsive to Home Assistant, OTA and automations while the
+panel settles. `update()` itself blocks for roughly half a second (the reset sequence is mostly
+fixed delays required by the controller).
+
+This matters more than it sounds: ESPHome warns when a component blocks the main loop, and its
+warning threshold saturates at 2550 ms with no way to raise it. A driver that waited inline for
+the refresh would log `display took a long time for an operation (~16000 ms)` on *every* update,
+forever.
 
 ## Hardware notes — e-Paper ESP32 Driver Board
 
