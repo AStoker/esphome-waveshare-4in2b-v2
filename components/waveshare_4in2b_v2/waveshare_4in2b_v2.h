@@ -49,6 +49,14 @@ class Waveshare4In2BV2 : public display::DisplayBuffer,
   void set_busy_pin(GPIOPin *busy_pin) { this->busy_pin_ = busy_pin; }
   void set_model(Model model) { this->model_ = model; }
 
+  /// True from the moment update() starts a refresh until loop() sees the panel go idle.
+  ///
+  /// update() only queues the refresh -- the panel then takes 15-20 s, awaited in loop(). A
+  /// caller that powers the board down when update() returns cuts the refresh off partway and
+  /// leaves half an image on the glass, which is exactly what a deep-sleep cycle does. Wait on
+  /// this before sleeping.
+  bool is_refreshing() const { return this->refresh_pending_; }
+
   void fill(Color color) override;
   display::DisplayType get_display_type() override { return display::DisplayType::DISPLAY_TYPE_COLOR; }
 
